@@ -12,11 +12,7 @@
 						"string" : "3.23"
 					},
 					"projectIndex" : 0,
-					"source" : ".",
-					"targetIndexes" : 
-					[
-						0
-					]
+					"source" : "."
 				}
 			],
 			"name" : "Debug",
@@ -27,23 +23,10 @@
 					[
 						0
 					],
-					"name" : "gremsy_mavsdk",
-					"targetIndexes" : 
-					[
-						0
-					]
+					"name" : "gremsy_mavsdk"
 				}
 			],
-			"targets" : 
-			[
-				{
-					"directoryIndex" : 0,
-					"id" : "gremsy_mavsdk::@6890427a1f51a3e7e1df",
-					"jsonFile" : "target-gremsy_mavsdk-Debug-39bf7ffca91204b51c44.json",
-					"name" : "gremsy_mavsdk",
-					"projectIndex" : 0
-				}
-			]
+			"targets" : []
 		}
 	],
 	"kind" : "codemodel",
