@@ -1,2 +1,0 @@
-/home/nigel/Documents/gremsy_mavsdk/cmake-build-debug/CMakeFiles/edit_cache.dir
-/home/nigel/Documents/gremsy_mavsdk/cmake-build-debug/CMakeFiles/rebuild_cache.dir
