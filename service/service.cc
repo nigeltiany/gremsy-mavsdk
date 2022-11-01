@@ -2,13 +2,16 @@
 // Created by Nigel Tiany on 20/10/22.
 //
 
-#include "gimbal.grpc.pb.h"
 #include <grpcpp/grpcpp.h>
 #include <memory>
 #include <iostream>
-
-#include "serial_port.h"
-#include "gremsy_interface.h"
+#include <chrono>
+#include <mavsdk/mavsdk.h>
+#include <mavsdk/plugins/telemetry/telemetry.h>
+#include <mavsdk/plugins/gimbal/gimbal.h>
+#include <future>
+#include <thread>
+#include "gimbal.grpc.pb.h"
 
 using grpc::Server;
 using grpc::ServerBuilder;
@@ -17,38 +20,37 @@ using grpc::Status;
 using Service = mavsdk::rpc::gimbal::GimbalService::Service;
 using mavsdk::rpc::gimbal::GimbalResult;
 using mavsdk::rpc::gimbal::SetModeResponse;
+using std::chrono::seconds;
+using std::this_thread::sleep_for;
 
 class GremsyMAVSDK final : public Service {
 
 private:
-
-    Serial_Port serialPort;
-    Gimbal_Interface gimbalInterface;
+    mavsdk::Gimbal gimbal;
+    mavsdk::Telemetry telemetry;
 
 public:
 
-    GremsyMAVSDK (char *uart, int baudrate) : serialPort(uart, baudrate), gimbalInterface(&serialPort) {
-        serialPort.start();
-        gimbalInterface.start();
+    explicit GremsyMAVSDK(std::shared_ptr<mavsdk::System> mavsdkSys) : gimbal{ mavsdkSys }, telemetry{ mavsdkSys } {
+        telemetry.subscribe_camera_attitude_euler([](mavsdk::Telemetry::EulerAngle angle) {
+            std::cout << "Gimbal angle pitch: " << angle.pitch_deg << " deg, yaw: " << angle.yaw_deg << " yaw\n";
+        });
     }
 
-
-    ~GremsyMAVSDK() override {
-        gimbalInterface.stop();
-        serialPort.stop();
-    };
+    ~GremsyMAVSDK() override = default;;
 
     Status SetPitchAndYaw(::grpc::ServerContext *context, const ::mavsdk::rpc::gimbal::SetPitchAndYawRequest *request,
                           ::mavsdk::rpc::gimbal::SetPitchAndYawResponse *response) override {
 
-        int res = gimbalInterface.set_gimbal_rotation_sync(request->pitch_deg(), 0, request->yaw_deg(), GIMBAL_ROTATION_MODE_RELATIVE_ANGLE);
-        if (res != MAV_RESULT_ACCEPTED && res != MAV_RESULT_IN_PROGRESS) {
-            return Status(grpc::DATA_LOSS, "Possible data loss");
+        auto result = new GimbalResult();
+        mavsdk::Gimbal::Result exec_result = gimbal.set_pitch_and_yaw(request->pitch_deg(), request->yaw_deg());
+
+        if (exec_result != mavsdk::Gimbal::Result::Success) {
+            result->set_result(mavsdk::rpc::gimbal::GimbalResult_Result_RESULT_ERROR);
+            return { grpc::UNKNOWN, "An unknown error occurred" };
         }
 
-        auto result = new GimbalResult();
         result->set_result(mavsdk::rpc::gimbal::GimbalResult_Result_RESULT_SUCCESS);
-        response->set_allocated_gimbal_result(result);
         return Status::OK;
 
     }
@@ -62,17 +64,24 @@ public:
     Status SetMode(::grpc::ServerContext *context, const ::mavsdk::rpc::gimbal::SetModeRequest *request,
                    ::mavsdk::rpc::gimbal::SetModeResponse *response) override {
 
+        auto result = new GimbalResult();
+        mavsdk::Gimbal::Result exec_result;
+
         switch (request->gimbal_mode()) {
             case mavsdk::rpc::gimbal::GIMBAL_MODE_YAW_FOLLOW:
-                gimbalInterface.set_gimbal_follow_mode_sync();
+                exec_result = gimbal.set_mode(mavsdk::Gimbal::GimbalMode::YawFollow);
             case mavsdk::rpc::gimbal::GIMBAL_MODE_YAW_LOCK:
-                gimbalInterface.set_gimbal_lock_mode_sync();
+                exec_result = gimbal.set_mode(mavsdk::Gimbal::GimbalMode::YawLock);
             case mavsdk::rpc::gimbal::GimbalMode_INT_MIN_SENTINEL_DO_NOT_USE_:
             case mavsdk::rpc::gimbal::GimbalMode_INT_MAX_SENTINEL_DO_NOT_USE_:
-                return Status(grpc::INVALID_ARGUMENT, "Invalid argument");
+                return { grpc::INVALID_ARGUMENT, "Invalid argument" };
         }
 
-        auto result = new GimbalResult();
+        if (exec_result != mavsdk::Gimbal::Result::Success) {
+            result->set_result(mavsdk::rpc::gimbal::GimbalResult_Result_RESULT_ERROR);
+            return { grpc::UNKNOWN, "An unknown error occurred" };
+        }
+
         result->set_result(mavsdk::rpc::gimbal::GimbalResult_Result_RESULT_SUCCESS);
         response->set_allocated_gimbal_result(result);
         return Status::OK;
@@ -86,12 +95,37 @@ public:
 
     Status TakeControl(::grpc::ServerContext *context, const ::mavsdk::rpc::gimbal::TakeControlRequest *request,
                        ::mavsdk::rpc::gimbal::TakeControlResponse *response) override {
-        return Status(grpc::UNIMPLEMENTED, "Unimplemented");
+
+        std::cout << "take control" << std::endl;
+        auto exec_result = gimbal.take_control(mavsdk::Gimbal::ControlMode::Primary);
+
+        auto result = new GimbalResult();
+        response->set_allocated_gimbal_result(result);
+
+        if (exec_result != mavsdk::Gimbal::Result::Success) {
+            result->set_result(mavsdk::rpc::gimbal::GimbalResult_Result_RESULT_ERROR);
+            return { grpc::UNKNOWN, "An unknown error occurred" };
+        }
+        result->set_result(mavsdk::rpc::gimbal::GimbalResult_Result_RESULT_SUCCESS);
+        return Status::OK;
+
     }
 
     Status ReleaseControl(::grpc::ServerContext *context, const ::mavsdk::rpc::gimbal::ReleaseControlRequest *request,
                           ::mavsdk::rpc::gimbal::ReleaseControlResponse *response) override {
-        return Status(grpc::UNIMPLEMENTED, "Unimplemented");
+
+        auto exec_result = gimbal.release_control();
+
+        auto result = new GimbalResult();
+        response->set_allocated_gimbal_result(result);
+
+        if (exec_result != mavsdk::Gimbal::Result::Success) {
+            result->set_result(mavsdk::rpc::gimbal::GimbalResult_Result_RESULT_ERROR);
+            return { grpc::UNKNOWN, "An unknown error occurred" };
+        }
+        result->set_result(mavsdk::rpc::gimbal::GimbalResult_Result_RESULT_SUCCESS);
+        return Status::OK;
+
     }
 
     Status
@@ -102,10 +136,10 @@ public:
 
 };
 
-void RunServer(char *u, int b) {
+void RunServer(std::shared_ptr<mavsdk::System> mavsdkSys) {
 
     std::string server_address{"localhost:11520"};
-    GremsyMAVSDK service(u, b);
+    GremsyMAVSDK service(mavsdkSys);
 
     // Build server
     ServerBuilder builder;
@@ -161,18 +195,61 @@ void parse_commandline(int argc, char **argv, char *&uart_name, int &baudrate) {
 
 }
 
+std::shared_ptr<mavsdk::System> get_system(mavsdk::Mavsdk& mavsdk) {
+
+    std::cout << "Waiting to discover system...\n";
+    auto prom = std::promise<std::shared_ptr<mavsdk::System>>{};
+    auto fut = prom.get_future();
+
+    // We wait for new systems to be discovered, once we find one that has an
+    // autopilot, we decide to use it.
+    mavsdk::Mavsdk::NewSystemHandle handle = mavsdk.subscribe_on_new_system([&mavsdk, &prom, &handle]() {
+        auto system = mavsdk.systems().back();
+
+        if (system->has_autopilot()) {
+            std::cout << "Discovered autopilot\n";
+
+            // Unsubscribe again as we only want to find one system.
+            mavsdk.unsubscribe_on_new_system(handle);
+            prom.set_value(system);
+        }
+    });
+
+    // We usually receive heartbeats at 1Hz, therefore we should find a
+    // system after around 3 seconds max, surely.
+    if (fut.wait_for(seconds(4)) == std::future_status::timeout) {
+        std::cerr << "No autopilot found.\n";
+        return {};
+    }
+
+    // Get discovered system now.
+    return fut.get();
+}
+
+
 int main(int argc, char** argv) {
 
 #ifdef __APPLE__
     char *uart_name = (char*)"/dev/tty.usbmodem1";
 #else
-    char *uart_name = (char*)"/dev/ttyUSB0";
+    char *uart_name = (char*)"/dev/ttyACM0";
 #endif
-    int baudrate = 115200;
+    int baudrate = 57600;
 
     parse_commandline(argc, argv, uart_name, baudrate);
 
-    RunServer(uart_name, baudrate);
+    mavsdk::Mavsdk mavsdk;
+    std::string device = uart_name;
+    std::string connection = "serial://" + device + ":" + std::to_string(baudrate);
+    std::cout << "Connecting through: " + connection << std::endl;
+    mavsdk.add_any_connection(connection);
+
+    auto mavsdkSystem = get_system(mavsdk);
+    if (!mavsdkSystem) {
+        return 1;
+    }
+
+    RunServer(mavsdkSystem);
 
     return 0;
 

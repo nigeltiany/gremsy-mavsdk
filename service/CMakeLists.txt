@@ -6,11 +6,8 @@ set(service_headers "${CMAKE_CURRENT_BINARY_DIR}/gimbal.pb.h")
 set(gimbal_grpc_sources "${CMAKE_CURRENT_BINARY_DIR}/gimbal.grpc.pb.cc")
 set(gimbal_grpc_headers "${CMAKE_CURRENT_BINARY_DIR}/gimbal.grpc.pb.h")
 
-set(gremsy_sources "${CMAKE_SOURCE_DIR}/service/gremsy_interface.cpp")
-set(gremsy_headers "${CMAKE_SOURCE_DIR}/service/gremsy_interface.h")
-set(serial_port_sources "${CMAKE_SOURCE_DIR}/service/serial_port.cpp")
-set(serial_port_headers "${CMAKE_SOURCE_DIR}/service/serial_port.h")
-set(mavlink_sources "${CMAKE_SOURCE_DIR}/mavlink")
+set(CURL_DIR /home/nigel/MAVSDK/build/default/third_party/install/lib/cmake/CURL)
+set(jsoncpp_DIR /home/nigel/MAVSDK/build/default/third_party/install/lib/cmake/jsoncpp)
 
 add_custom_command(
         OUTPUT "${service_sources}" "${service_headers}" "${gimbal_grpc_sources}" "${gimbal_grpc_headers}"
@@ -22,23 +19,23 @@ add_custom_command(
         DEPENDS "${service}")
 
 include_directories("${CMAKE_CURRENT_BINARY_DIR}")
-include_directories("${mavlink_sources}")
 
 add_library(gimbal_grpc_proto
         ${service_sources}
         ${service_headers}
         ${gimbal_grpc_sources}
-        ${gimbal_grpc_headers}
-        ${gremsy_sources}
-        ${gremsy_headers}
-        ${mavlink_sources}
-        ${serial_port_sources}
-        ${serial_port_headers})
+        ${gimbal_grpc_headers})
 
 target_link_libraries(gimbal_grpc_proto
         ${_PROTOBUF_LIBPROTOBUF}
         ${_REFLECTION}
         ${_GRPC_GRPCPP})
+
+find_package(MAVSDK REQUIRED)
+
+target_link_libraries(gimbal_grpc_proto
+    MAVSDK::mavsdk
+)
 
 foreach(_target service)
     add_executable(${_target} "${_target}.cc")
